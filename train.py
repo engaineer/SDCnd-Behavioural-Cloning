@@ -1,24 +1,22 @@
-import argparse, csv, time
+import argparse
 import random
+import re
+import time
+from glob import glob
+from math import ceil
+from os import path
 
+import cv2
 import numpy as np
 import pandas as pd
-from glob import glob
-from os import path
-import re
-from math import ceil
-
+from keras import optimizers
+from keras.callbacks import ModelCheckpoint, EarlyStopping, TensorBoard, ReduceLROnPlateau
+from keras.layers import Input
 from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
 
-import cv2
-
-from keras.callbacks import ModelCheckpoint, EarlyStopping, TensorBoard, ReduceLROnPlateau
-from keras.layers import Input
-from keras import optimizers, losses
-
-from utils.generator import threadsafe_iter
 from models.nvidia import nvidia_model
+from utils.generator import threadsafe_iter
 
 
 def batch_generator(df, batch_sz, lr_angle, training=True):
@@ -40,19 +38,21 @@ def batch_generator(df, batch_sz, lr_angle, training=True):
             angle = float(row.steering)
 
             camera = 'center'
+
+            # Select either the left or right images.
+            camera = np.random.choice(['center', 'left', 'right'], 1)[0]
+
+            # Adjust the angle if required.
+            if camera == 'left':
+                angle += lr_angle
+            elif camera == 'right':
+                angle -= lr_angle
+            else:
+                pass
+
             if training:
                 # Only manipulate the test data not the validation data.
-
-                # Select either the left or right images.
-                camera = np.random.choice(['center', 'left', 'right'], 1)[0]
-
-                # Adjust the angle if required.
-                if camera == 'left':
-                    angle += lr_angle
-                elif camera == 'right':
-                    angle -= lr_angle
-                else:
-                    pass
+                pass
 
             # Get the actual image.
             image_fpath = row[camera]
@@ -67,10 +67,9 @@ def batch_generator(df, batch_sz, lr_angle, training=True):
                 img = np.fliplr(img)
                 angle = -angle
 
-
             if np.asarray(img).dtype not in [np.int32, np.uint8, np.uint16, np.uint32] or \
-                np.min(img) < 0 or \
-                np.max(img) > 255:
+                    np.min(img) < 0 or \
+                    np.max(img) > 255:
                 raise ValueError('Image datatype or range is wrong prioer to normalization.')
 
             # Center the data
@@ -126,11 +125,25 @@ def load_data(datadir, logname):
 
     # Group the steering data into steering bin interval category bins.
     bins = np.round(np.arange(-0.5, 0.6, 0.1), 1)
-    logdata['bin'] = pd.cut(logdata['steering'], bins)
-    logdata = logdata.dropna()
-    logdata.reindex()
+    bins = np.concatenate([[-1, -0.75], bins, [0.75, 1]])
+    logdata['bin'] = pd.cut(logdata['steering'], include_lowest=True, right=True, bins=bins)
 
-    return train_test_split(logdata, test_size=0.2)
+    logdata = logdata.dropna()
+
+    train_df, validation_df = train_test_split(logdata, test_size=0.2)
+
+    train_df.reindex()
+    validation_df.reindex()
+
+    return train_df, validation_df
+
+
+def show_bin_dist(df, name):
+    print("=" * 20)
+    print("\t" + name + " Steering Distribution")
+    print("-" * 20)
+    print(df.groupby('bin').size())
+    print("\n")
 
 
 def model_fname(name='model', save_path=''):
@@ -139,19 +152,25 @@ def model_fname(name='model', save_path=''):
     return path.join(save_path, fname) if len(save_path) > 0 else fname
 
 
-def train(model_arch, datadir, drivelog_name, save_model, offset_correction, batch_sz, lr, tensorboard, logdir, patience,
+def train(model_arch, datadir, drivelog_name, save_model, offset_correction, batch_sz, lr, tensorboard, logdir,
+          patience,
           multiprocessing, crops, trained_savepath):
     # Get the test and validation data frames.
     train_df, validation_df = load_data(datadir, drivelog_name)
 
+    show_bin_dist(train_df, 'Training')
+    show_bin_dist(validation_df, 'Validation')
+
     if len(train_df.index) == 0 or len(validation_df.index) == 0:
         raise RuntimeError('Training or Test dataframes are empty.')
 
-    train_generator = threadsafe_iter(batch_generator(train_df, batch_sz=batch_sz, lr_angle=offset_correction, training=True))
-    validation_generator = threadsafe_iter(batch_generator(validation_df, batch_sz=batch_sz, lr_angle=offset_correction, training=False))
+    train_generator = threadsafe_iter(
+        batch_generator(train_df, batch_sz=batch_sz, lr_angle=offset_correction, training=True))
+    validation_generator = threadsafe_iter(
+        batch_generator(validation_df, batch_sz=batch_sz, lr_angle=offset_correction, training=False))
 
     # Input tensors
-    input_img = Input(shape=(160,320,3), name='image')
+    input_img = Input(shape=(160, 320, 3), name='image')
 
     # Model Selection
     if model_arch.lower() == 'nvidia':
@@ -184,8 +203,6 @@ def train(model_arch, datadir, drivelog_name, save_model, offset_correction, bat
     # Learning rate scheduller
     callback_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=2, min_lr=1e-4, verbose=1)
     callbacks.append(callback_lr)
-
-    #TODO: Additional learning rate decay as per Google paper.
 
     model.fit_generator(train_generator,
                         steps_per_epoch=train_df.size // batch_sz,
@@ -305,14 +322,12 @@ if __name__ == '__main__':
         help='Top Bottom pixel margin to crop.'
     )
 
-
     parser.add_argument(
         '--tensorboard',
         dest='tensorboard',
         action='store_true',
         help='Enable tensorboard'
     )
-
 
     cfg = parser.parse_args()
 
