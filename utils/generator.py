@@ -1,5 +1,8 @@
 import threading
 
+
+# TODO : Fix iterator.
+
 class threadsafe_iter:
     """Takes a generator and makes it threadsafe.
     """
@@ -10,13 +13,13 @@ class threadsafe_iter:
     def __iter__(self):
         return self
 
-    def next(self):
+    def __next__(self):
         with self.lock:
-            return self.it.next()
+            return self.it.__next__()
 
 
 def threadsafe_generator(f):
-    """A decorator for  make a generator threadsafe.
+    """A decorator that takes a generator function and makes it thread-safe.
     """
     def g(*a, **kw):
         return threadsafe_iter(f(*a, **kw))

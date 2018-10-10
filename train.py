@@ -1,4 +1,6 @@
 import argparse, csv, time
+import random
+
 import numpy as np
 import pandas as pd
 from glob import glob
@@ -12,9 +14,11 @@ from sklearn.utils import shuffle
 import cv2
 
 from keras.callbacks import ModelCheckpoint, EarlyStopping, TensorBoard
+from keras.layers import Input
+from keras import optimizers, losses
 
-from utils.generator import threadsafe_generator
-
+from utils.generator import threadsafe_iter
+from models.nvidia import nvidia_model
 
 def batch_generator(df, batch_sz, lr_angle, training=True):
     samples = shuffle(df)
@@ -39,7 +43,7 @@ def batch_generator(df, batch_sz, lr_angle, training=True):
                 # Only manipulate the test data not the validation data.
 
                 # Select either the left or right images.
-                camera = np.sample(['center', 'left', 'right'], 1)[0]
+                camera = np.random.choice(['center', 'left', 'right'], 1)[0]
 
                 # Adjust the angle if required.
                 if camera == 'left':
@@ -56,8 +60,20 @@ def batch_generator(df, batch_sz, lr_angle, training=True):
 
             img = cv2.imread(image_fpath)
 
+            # Randomly flip Left/Right the images to assist with balancing
+            if random.choice([True, False]):
+                # Note that I used numpy flip as is it is about 20x faster than OpenCV
+                img = np.fliplr(img)
+                angle = -angle
+
+
+            if np.asarray(img).dtype not in [np.int32, np.uint8, np.uint16, np.uint32] or \
+                np.min(img) < 0 or \
+                np.max(img) > 255:
+                raise ValueError('Image datatype or range is wrong prioer to normalization.')
+
             # Center the data
-            image = (image - 127.5) / 127.5
+            img = (img - 127.5) / 127.5
 
             batch_angles.append(angle)
             batch_images.append(img)
@@ -110,6 +126,7 @@ def load_data(datadir, logname):
     # Group the steering data into steering bin interval category bins.
     bins = np.round(np.arange(-0.5, 0.6, 0.1), 1)
     logdata['bin'] = pd.cut(logdata['steering'], bins)
+    logdata = logdata.dropna()
     logdata.reindex()
 
     return train_test_split(logdata, test_size=0.2)
@@ -121,25 +138,33 @@ def model_fname(name='model', save_path=''):
     return path.join(save_path, fname) if len(save_path) > 0 else fname
 
 
-def train(model_arch, datadir, drivelog_name, save_model, lr_angle, batch_sz, tensorboard, logdir, patience,
-          multiprocessing):
+def train(model_arch, datadir, drivelog_name, save_model, offset_correction, batch_sz, lr, tensorboard, logdir, patience,
+          multiprocessing, crops):
     # Get the test and validation data frames.
     train_df, validation_df = load_data(datadir, drivelog_name)
 
-    if len(train_df.index) == 0 or len(test_df.index) == 0:
+    if len(train_df.index) == 0 or len(validation_df.index) == 0:
         raise RuntimeError('Training or Test dataframes are empty.')
 
-    @threadsafe_generator
-    def train_generator():
-        return batch_generator(train_df, batch_sz=batch_sz, lr_angle=lr_angle, training=True)
+    train_generator = threadsafe_iter(batch_generator(train_df, batch_sz=batch_sz, lr_angle=offset_correction, training=True))
+    validation_generator = threadsafe_iter(batch_generator(validation_df, batch_sz=batch_sz, lr_angle=offset_correction, training=False))
 
-    @threadsafe_generator
-    def validation_generator():
-        return batch_generator(validation_df, batch_sz=batch_sz, lr_angle=lr_angle, training=False)
+    # Input tensors
+    input_img = Input(shape=(160,320,3), name='image')
 
-    #TODO: Define model
-    model = None
+    # Model Selection
+    if model_arch.lower() == 'nvidia':
+        model = nvidia_model(input_img, crops)
+    else:
+        ValueError("Do not know how to handle value '{}' for model_arch.".format(model_arch))
 
+    # Model Optimizer
+    optimizer = optimizers.Nadam(lr=lr)
+
+    # Compile the Model
+    model.compile(optimizer=optimizer, loss='mse')
+
+    # Define the fit callbacks to run after each epoch.
     callbacks = []
 
     if tensorboard:
@@ -158,12 +183,13 @@ def train(model_arch, datadir, drivelog_name, save_model, lr_angle, batch_sz, te
     #TODO: Additional learning rate decay as per Google paper.
 
     model.fit_generator(train_generator,
-                        steps_per_epoch=train_df // batch_sz,
+                        steps_per_epoch=train_df.size // batch_sz,
                         epochs=50,
                         callbacks=callbacks,
                         validation_data=validation_generator,
                         validation_steps=validation_df.size // batch_sz,
                         use_multiprocessing=multiprocessing['enabled'],
+                        max_queue_size=50,
                         workers=multiprocessing['workers'] if multiprocessing['enabled'] else 1
                         )
 
@@ -203,7 +229,7 @@ if __name__ == '__main__':
     )
 
     parser.add_argument(
-        '--lr_angle',
+        '--offset_correction',
         type=float,
         default=0.25,
         help='Adjustment angle for left and right camera offets.'
@@ -217,7 +243,14 @@ if __name__ == '__main__':
     )
 
     parser.add_argument(
-        '--log_dir',
+        '--lr',
+        type=int,
+        default=2e-3,
+        help='Starting Learning Rate'
+    )
+
+    parser.add_argument(
+        '--logdir',
         type=str,
         default='./logs',
         help='Log directory'
@@ -244,14 +277,43 @@ if __name__ == '__main__':
         help='Patience for early stopping.'
     )
 
+    parser.add_argument(
+        "--crop_lr",
+        nargs=2,
+        type=int,
+        default=[0, 0],
+        help='Left Right pixel margin to crop.'
+    )
+
+    parser.add_argument(
+        "--crop_tb",
+        nargs=2,
+        type=int,
+        default=[60, 20],
+        help='Top Bottom pixel margin to crop.'
+    )
+
+
+    parser.add_argument(
+        '--tensorboard',
+        dest='tensorboard',
+        action='store_true',
+        help='Enable tensorboard'
+    )
+
+
     cfg = parser.parse_args()
 
     train(model_arch=cfg.model,
           datadir=cfg.datadir,
           drivelog_name=cfg.drivelog_name,
           save_model=cfg.save_model,
-          lr_angle=cfg.lr_angle,
+          offset_correction=cfg.offset_correction,
           batch_sz=cfg.batch_sz,
+          lr=cfg.lr,
           patience=cfg.patience,
-          multiprocessing={'enabled': cfg.multiprocessing, 'workers': cfg.workers}
+          multiprocessing={'enabled': cfg.multiprocessing, 'workers': cfg.workers},
+          crops=(tuple(cfg.crop_tb), tuple(cfg.crop_lr)),
+          logdir=cfg.logdir,
+          tensorboard=cfg.tensorboard
           )
