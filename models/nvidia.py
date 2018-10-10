@@ -41,7 +41,7 @@ def nvidia_model(img, crops=((0, 0), (0, 0)) ):
     x = Dense(128, activation='relu')(x)
     xst = Dense(64, activation='relu')(x)
     xst = Dense(16, activation='relu')(xst)
-    out_steering = Dense(1, activation='relu')(xst)
+    out_steering = Dense(1      )(xst)
 
     model = Model(inputs=[img], outputs=[out_steering])
 
