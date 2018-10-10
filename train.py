@@ -13,12 +13,13 @@ from sklearn.utils import shuffle
 
 import cv2
 
-from keras.callbacks import ModelCheckpoint, EarlyStopping, TensorBoard
+from keras.callbacks import ModelCheckpoint, EarlyStopping, TensorBoard, ReduceLROnPlateau
 from keras.layers import Input
 from keras import optimizers, losses
 
 from utils.generator import threadsafe_iter
 from models.nvidia import nvidia_model
+
 
 def batch_generator(df, batch_sz, lr_angle, training=True):
     samples = shuffle(df)
@@ -139,7 +140,7 @@ def model_fname(name='model', save_path=''):
 
 
 def train(model_arch, datadir, drivelog_name, save_model, offset_correction, batch_sz, lr, tensorboard, logdir, patience,
-          multiprocessing, crops):
+          multiprocessing, crops, trained_savepath):
     # Get the test and validation data frames.
     train_df, validation_df = load_data(datadir, drivelog_name)
 
@@ -159,7 +160,7 @@ def train(model_arch, datadir, drivelog_name, save_model, offset_correction, bat
         ValueError("Do not know how to handle value '{}' for model_arch.".format(model_arch))
 
     # Model Optimizer
-    optimizer = optimizers.Nadam(lr=lr)
+    optimizer = optimizers.SGD(lr=lr, nesterov=True)
 
     # Compile the Model
     model.compile(optimizer=optimizer, loss='mse')
@@ -172,13 +173,17 @@ def train(model_arch, datadir, drivelog_name, save_model, offset_correction, bat
         callbacks.append(tb_callback)
 
     if save_model:
-        model_fpath = model_fname(name=model_arch, save_path='./models')
+        model_fpath = model_fname(name=model_arch, save_path=trained_savepath)
         callback_cp = ModelCheckpoint(filepath=model_fpath, save_best_only=True)
         callbacks.append(callback_cp)
 
     # Early Stopping.
     callback_es = EarlyStopping(monitor='val_loss', mode='min', patience=patience, verbose=1)
     callbacks.append(callback_es)
+
+    # Learning rate scheduller
+    callback_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=2, min_lr=1e-4, verbose=1)
+    callbacks.append(callback_lr)
 
     #TODO: Additional learning rate decay as per Google paper.
 
@@ -189,7 +194,7 @@ def train(model_arch, datadir, drivelog_name, save_model, offset_correction, bat
                         validation_data=validation_generator,
                         validation_steps=validation_df.size // batch_sz,
                         use_multiprocessing=multiprocessing['enabled'],
-                        max_queue_size=50,
+                        max_queue_size=40,
                         workers=multiprocessing['workers'] if multiprocessing['enabled'] else 1
                         )
 
@@ -226,6 +231,13 @@ if __name__ == '__main__':
         type=bool,
         default=True,
         help='Save the model upon completion.'
+    )
+
+    parser.add_argument(
+        '--trained_savepath',
+        type=str,
+        default='trained',
+        help='File path on where to save the model.'
     )
 
     parser.add_argument(
@@ -273,7 +285,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--patience',
         type=int,
-        default=4,
+        default=5,
         help='Patience for early stopping.'
     )
 
@@ -315,5 +327,6 @@ if __name__ == '__main__':
           multiprocessing={'enabled': cfg.multiprocessing, 'workers': cfg.workers},
           crops=(tuple(cfg.crop_tb), tuple(cfg.crop_lr)),
           logdir=cfg.logdir,
+          trained_savepath=cfg.trained_savepath,
           tensorboard=cfg.tensorboard
           )
