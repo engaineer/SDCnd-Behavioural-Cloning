@@ -15,15 +15,72 @@ from keras.layers import Input
 from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
 
+from lenet import lenet_model
+from model import simple_model
 from models.nvidia import nvidia_model
 from utils.generator import threadsafe_iter
 
 
-def batch_generator(df, batch_sz, lr_angle, training=True):
+def plain_generator(df, batch_sz):
+
     samples = shuffle(df)
 
-    groups = df.groupby('bin')
+
+    while True:
+
+        batch_images = []
+        batch_angles = []
+        batch_speed = []
+        batch_throttle = []
+
+        batch = samples.sample(batch_sz, replace=False)
+
+        for idx, row in batch.iterrows():
+
+            angle = float(row['steering'])
+            speed = float(row['speed'])
+            throttle = float(row['throttle'])
+
+            camera = 'center'
+
+            # Get the actual image.
+            image_fpath = row[camera]
+
+            if not path.isfile(image_fpath):
+                raise FileNotFoundError("Cannot find file '{}'".format(image_fpath))
+
+            img = cv2.imread(image_fpath)
+
+            # The provided drive code use images in RGB format. So convert to RGB for training.
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+            img = (img / 255.) - 0.5
+
+            batch_angles.append(angle)
+            batch_images.append(img)
+            batch_speed.append(speed)
+            batch_throttle.append(throttle)
+
+        yield [np.asarray(batch_images), np.asarray(batch_speed)], [np.asarray(batch_angles), np.asarray(batch_throttle)]
+
+
+def training_generator(df, batch_sz, lr_angle):
+
+    samples = shuffle(df)
+
+    groups = samples.groupby('bin', observed=True)
+
+    empty_groups = []
+    for name, group in groups:
+        group_size = groups.get_group(name).size
+        if group_size == 0:
+            empty_groups.append(name)
+
+    for n in empty_groups:
+        df.drop(groups.get_group(n).index)
+
     samples_per_group = ceil(batch_sz / groups.ngroups)
+
 
     while True:
 
@@ -32,14 +89,17 @@ def batch_generator(df, batch_sz, lr_angle, training=True):
 
         batch_images = []
         batch_angles = []
+        batch_speed = []
+        batch_throttle = []
 
         for idx, row in batch.iterrows():
 
-            angle = float(row.steering)
+            angle = float(row['steering'])
+            speed = float(row['speed'])
+            throttle = float(row['throttle'])
 
-            camera = 'center'
 
-            # Select either the left or right images.
+             # Select either the left or right images.
             camera = np.random.choice(['center', 'left', 'right'], 1)[0]
 
             # Adjust the angle if required.
@@ -50,16 +110,15 @@ def batch_generator(df, batch_sz, lr_angle, training=True):
             else:
                 pass
 
-            if training:
-                # Only manipulate the test data not the validation data.
-                pass
-
             # Get the actual image.
             image_fpath = row[camera]
             if not path.isfile(image_fpath):
                 raise FileNotFoundError("Cannot find file '{}'".format(image_fpath))
 
             img = cv2.imread(image_fpath)
+
+            # The provided drive code use images in RGB format. So convert to RGB for training.
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
             # Randomly flip Left/Right the images to assist with balancing
             if random.choice([True, False]):
@@ -72,13 +131,14 @@ def batch_generator(df, batch_sz, lr_angle, training=True):
                     np.max(img) > 255:
                 raise ValueError('Image datatype or range is wrong prioer to normalization.')
 
-            # Center the data
-            img = (img - 127.5) / 127.5
+            img = (img / 255.) - 0.5
 
             batch_angles.append(angle)
             batch_images.append(img)
+            batch_speed.append(speed)
+            batch_throttle.append(throttle)
 
-            yield [np.asarray(batch_images), np.asarray(batch_angles)]
+        yield [np.asarray(batch_images), np.asarray(batch_speed)], [np.asarray(batch_angles), np.asarray(batch_throttle)]
 
 
 def load_data(datadir, logname):
@@ -153,8 +213,7 @@ def model_fname(name='model', save_path=''):
 
 
 def train(model_arch, datadir, drivelog_name, save_model, offset_correction, batch_sz, lr, tensorboard, logdir,
-          patience,
-          multiprocessing, crops, trained_savepath):
+          patience, multiprocessing, crops, trained_savepath, early_stopping, epochs):
     # Get the test and validation data frames.
     train_df, validation_df = load_data(datadir, drivelog_name)
 
@@ -164,25 +223,44 @@ def train(model_arch, datadir, drivelog_name, save_model, offset_correction, bat
     if len(train_df.index) == 0 or len(validation_df.index) == 0:
         raise RuntimeError('Training or Test dataframes are empty.')
 
-    train_generator = threadsafe_iter(
-        batch_generator(train_df, batch_sz=batch_sz, lr_angle=offset_correction, training=True))
-    validation_generator = threadsafe_iter(
-        batch_generator(validation_df, batch_sz=batch_sz, lr_angle=offset_correction, training=False))
+    if multiprocessing:
+        train_generator = threadsafe_iter(
+            training_generator(train_df, batch_sz=batch_sz, lr_angle=offset_correction))
+        validation_generator = threadsafe_iter(plain_generator(train_df, batch_sz=batch_sz))
+    else:
+        train_generator =  training_generator(train_df, batch_sz=batch_sz, lr_angle=offset_correction)
+        validation_generator = plain_generator(train_df, batch_sz=batch_sz)
 
     # Input tensors
     input_img = Input(shape=(160, 320, 3), name='image')
+    input_speed = Input(shape=(1,), name='speed')
+
+    # Model Optimizer
+    # optimizer = optimizers.SGD(lr=lr)
+    optimizer = optimizers.Adam(lr=lr)
 
     # Model Selection
     if model_arch.lower() == 'nvidia':
-        model = nvidia_model(input_img, crops)
+        model = nvidia_model(input_img, input_speed, crops)
+
+        # Define loss weights for the MIMO model with multiple outputs.
+        loss_weights = {'OUT_steer': 1., 'OUT_throttle': 0.15}
+        # Compile the Model
+        model.compile(optimizer=optimizer, loss='mse', loss_weights=loss_weights)
+
+    elif model_arch.lower() == 'simple':
+        model = simple_model(input_img, crops)
+        model.compile(optimizer=optimizer, loss='mse')
+
+
+    elif model_arch.lower() == 'lenet':
+        model = lenet_model(input_img, crops)
+        model.compile(optimizer=optimizer, loss='mse')
+
     else:
         ValueError("Do not know how to handle value '{}' for model_arch.".format(model_arch))
 
-    # Model Optimizer
-    optimizer = optimizers.SGD(lr=lr, nesterov=True)
 
-    # Compile the Model
-    model.compile(optimizer=optimizer, loss='mse')
 
     # Define the fit callbacks to run after each epoch.
     callbacks = []
@@ -191,29 +269,35 @@ def train(model_arch, datadir, drivelog_name, save_model, offset_correction, bat
         tb_callback = TensorBoard(log_dir=logdir, batch_size=batch_sz)
         callbacks.append(tb_callback)
 
+    model_fpath = model_fname(name=model_arch, save_path=trained_savepath)
+
     if save_model:
-        model_fpath = model_fname(name=model_arch, save_path=trained_savepath)
         callback_cp = ModelCheckpoint(filepath=model_fpath, save_best_only=True)
         callbacks.append(callback_cp)
 
-    # Early Stopping.
-    callback_es = EarlyStopping(monitor='val_loss', mode='min', patience=patience, verbose=1)
-    callbacks.append(callback_es)
+    if early_stopping:
+        # Early Stopping.
+        callback_es = EarlyStopping(monitor='val_loss', mode='min', patience=patience, verbose=1)
+        callbacks.append(callback_es)
 
     # Learning rate scheduller
-    callback_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=2, min_lr=1e-4, verbose=1)
+    callback_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=2, min_lr=1e-5, verbose=1)
     callbacks.append(callback_lr)
 
     model.fit_generator(train_generator,
-                        steps_per_epoch=train_df.size // batch_sz,
-                        epochs=50,
+                        steps_per_epoch=train_df.index.size // batch_sz,
+                        epochs=100 if early_stopping else epochs,
                         callbacks=callbacks,
                         validation_data=validation_generator,
-                        validation_steps=validation_df.size // batch_sz,
+                        validation_steps=validation_df.index.size // batch_sz,
                         use_multiprocessing=multiprocessing['enabled'],
-                        max_queue_size=40,
+                        max_queue_size=10,
                         workers=multiprocessing['workers'] if multiprocessing['enabled'] else 1
                         )
+
+    if save_model and not early_stopping:
+        print('Saved mode to :' + model_fpath)
+        model.save(model_fpath)
 
 
 if __name__ == '__main__':
@@ -273,8 +357,8 @@ if __name__ == '__main__':
 
     parser.add_argument(
         '--lr',
-        type=int,
-        default=2e-3,
+        type=float,
+        default=2e-4,
         help='Starting Learning Rate'
     )
 
@@ -307,6 +391,13 @@ if __name__ == '__main__':
     )
 
     parser.add_argument(
+        '--epochs',
+        type=int,
+        default=5,
+        help='Patience for early stopping.'
+    )
+
+    parser.add_argument(
         "--crop_lr",
         nargs=2,
         type=int,
@@ -329,6 +420,13 @@ if __name__ == '__main__':
         help='Enable tensorboard'
     )
 
+    parser.add_argument(
+        '--early_stopping',
+        dest='early_stopping',
+        action='store_true',
+        help='Enable early stopping.'
+    )
+
     cfg = parser.parse_args()
 
     train(model_arch=cfg.model,
@@ -343,5 +441,7 @@ if __name__ == '__main__':
           crops=(tuple(cfg.crop_tb), tuple(cfg.crop_lr)),
           logdir=cfg.logdir,
           trained_savepath=cfg.trained_savepath,
-          tensorboard=cfg.tensorboard
+          tensorboard=cfg.tensorboard,
+          early_stopping=cfg.early_stopping,
+          epochs=cfg.epochs
           )
