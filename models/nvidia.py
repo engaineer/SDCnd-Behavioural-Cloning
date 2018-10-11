@@ -1,6 +1,6 @@
 from keras.models import Sequential
 from keras.models import Model
-from keras.layers import Cropping2D, Conv2D, MaxPool2D, Flatten, Dense
+from keras.layers import Cropping2D, Conv2D, MaxPool2D, Flatten, Dense, Dropout
 from keras.layers import concatenate
 import numpy as np
 
@@ -39,23 +39,24 @@ def nvidia_model(img, speed, crops=((0, 0), (0, 0)) ):
     x = Conv2D(filters=64, kernel_size=3, activation='relu', name='L5_conv')(x)
 
     # 2D -> 1D Flatten to feed into FC layers
-    x = Flatten()(x)
-    x = Dense(128, activation='relu', name='FC1_steer')(x)
-    xst = Dense(64, activation='relu', name='FC2_steer')(x)
-
+    flattened = Flatten()(x)
+    xst = Dense(128, activation='relu', name='FC1_steer')(flattened)
+    xst = Dense(64, activation='relu', name='FC2_steer')(xst)
+    xst = Dense(16, activation='relu', name='FC3_steer')(xst)
+    out_steer = Dense(1,  name='OUT_steer')(xst)
 
     # Adding Throttle Control as an output to make a MIMO model
     # This should learn not to apply the throttle when the steering
     # is applying a significant angle to go through a turn if the speed is
     # already high. Also if road is straight / straightening out, and,
     # the speed is low, can go faster.
-    xth = concatenate([xst, speed], name='CC_speed')
-
-    xst = Dense(16, activation='relu', name='FC3_steer')(xst)
-    out_steer = Dense(1,  name='OUT_steer')(xst)
-
-    xth = Dense(32, activation='relu', name='FC1_speed')(xth)
+    xth = concatenate([flattened, out_steer, speed], name='CC_speed')
+    xth = Dropout(rate=0.5)(xth)
+    xth = Dense(64, activation='relu', name='FC1_speed')(xth)
+    xth = Dropout(rate=0.5)(xth)
     xth = Dense(16, activation='relu', name='FC2_speed')(xth)
+    xth = Dropout(rate=0.5)(xth)
+
     out_throttle = Dense(1, name='OUT_throttle')(xth)
 
     model = Model(inputs=[img, speed], outputs=[out_steer, out_throttle])

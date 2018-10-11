@@ -15,8 +15,8 @@ from keras.layers import Input
 from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
 
-from lenet import lenet_model
-from model import simple_model
+from models.lenet import lenet_model
+from models.simple import simple_model
 from models.nvidia import nvidia_model
 from utils.generator import threadsafe_iter
 
