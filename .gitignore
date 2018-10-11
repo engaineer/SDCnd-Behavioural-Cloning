@@ -1,9 +1,9 @@
 # Project specific files to ignore
 data/
 examples/
-models/
+trained/
 logs/
-
+recordings/
 
 # Created by .ignore support plugin (hsz.mobi)
 ### Python template
