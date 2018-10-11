@@ -1,8 +1,5 @@
 import threading
 
-
-# TODO : Fix iterator.
-
 class threadsafe_iter:
     """Takes a generator and makes it threadsafe.
     """
