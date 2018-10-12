@@ -176,9 +176,6 @@ def load_data(datadir, logname):
         if path.split(curr_data_path)[-1] != 'recovery':
             curr_logdata = steering_ewma(curr_logdata)
 
-        # Get rid of angles when stationary (to stop the car doing left right turns
-        # at the beginning when starting out anmd their is a straight road.)
-        curr_logdata.drop(curr_logdata[curr_logdata.speed < 1].index, inplace=True)
 
         def apply_img_path(saved_path, base_path, img_path='IMG'):
             img_fname = path.split(saved_path)[-1]
