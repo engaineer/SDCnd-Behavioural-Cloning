@@ -25,13 +25,11 @@ def plain_generator(df, batch_sz):
 
     samples = shuffle(df)
 
-
     while True:
 
         batch_images = []
         batch_angles = []
-        batch_speed = []
-        batch_throttle = []
+
 
         batch = samples.sample(batch_sz, replace=False)
 
@@ -58,10 +56,8 @@ def plain_generator(df, batch_sz):
 
             batch_angles.append(angle)
             batch_images.append(img)
-            batch_speed.append(speed)
-            batch_throttle.append(throttle)
 
-        yield [np.asarray(batch_images), np.asarray(batch_speed)], [np.asarray(batch_angles), np.asarray(batch_throttle)]
+        yield [np.asarray(batch_images)], [np.asarray(batch_angles)]
 
 
 def training_generator(df, batch_sz, lr_angle):
@@ -89,14 +85,11 @@ def training_generator(df, batch_sz, lr_angle):
 
         batch_images = []
         batch_angles = []
-        batch_speed = []
-        batch_throttle = []
 
         for idx, row in batch.iterrows():
 
             angle = float(row['steering'])
-            speed = float(row['speed'])
-            throttle = float(row['throttle'])
+
 
 
              # Select either the left or right images.
@@ -135,11 +128,19 @@ def training_generator(df, batch_sz, lr_angle):
 
             batch_angles.append(angle)
             batch_images.append(img)
-            batch_speed.append(speed)
-            batch_throttle.append(throttle)
 
-        yield [np.asarray(batch_images), np.asarray(batch_speed)], [np.asarray(batch_angles), np.asarray(batch_throttle)]
 
+        yield [np.asarray(batch_images)], [np.asarray(batch_angles)]
+
+def steering_ewma(df, smoothing_win_size=5, smoothing_shift=2):
+
+    smoothed_steering = df.steering.ewm(span=smoothing_win_size).mean()
+    df.steering = smoothed_steering
+    df.steering = df.steering.shift(-smoothing_shift)
+    # Shift the smoothed data back by smoothing amount
+    df = df[:-smoothing_shift]
+
+    return df
 
 def load_data(datadir, logname):
     glob_path = path.join(datadir, '**', logname)
@@ -170,6 +171,14 @@ def load_data(datadir, logname):
 
         curr_logdata = pd.read_csv(logfile, names=col_names, header=has_header(logfile), dtype=col_dtype,
                                    index_col=False)
+
+        # Smooth all data which is not the steering recovery data.
+        if path.split(curr_data_path)[-1] != 'recovery':
+            curr_logdata = steering_ewma(curr_logdata)
+
+        # Get rid of angles when stationary (to stop the car doing left right turns
+        # at the beginning when starting out anmd their is a straight road.)
+        curr_logdata.drop(curr_logdata[curr_logdata.speed < 1].index, inplace=True)
 
         def apply_img_path(saved_path, base_path, img_path='IMG'):
             img_fname = path.split(saved_path)[-1]
@@ -243,10 +252,8 @@ def train(model_arch, datadir, drivelog_name, save_model, offset_correction, bat
     if model_arch.lower() == 'nvidia':
         model = nvidia_model(input_img, input_speed, crops)
 
-        # Define loss weights for the MIMO model with multiple outputs.
-        loss_weights = {'OUT_steer': 1., 'OUT_throttle': 0.15}
         # Compile the Model
-        model.compile(optimizer=optimizer, loss='mse', loss_weights=loss_weights)
+        model.compile(optimizer=optimizer, loss='mse')
 
     elif model_arch.lower() == 'simple':
         model = simple_model(input_img, crops)

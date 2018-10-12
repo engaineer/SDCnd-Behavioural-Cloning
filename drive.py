@@ -15,8 +15,9 @@ from io import BytesIO
 from keras.models import load_model
 import h5py
 from keras import __version__ as keras_version
-
-import cv2
+from collections import deque
+import math
+import numpy as np
 
 sio = socketio.Server()
 app = Flask(__name__)
@@ -35,6 +36,9 @@ class SimplePIController:
     def set_desired(self, desired):
         self.set_point = desired
 
+    def get_desired(self):
+        return self.set_point
+
     def update(self, measurement):
         # proportional error
         self.error = self.set_point - measurement
@@ -48,6 +52,10 @@ class SimplePIController:
 controller = SimplePIController(0.1, 0.002)
 set_speed = 9
 controller.set_desired(set_speed)
+
+steerq = deque(maxlen=5)
+
+
 
 
 @sio.on('telemetry')
@@ -64,11 +72,20 @@ def telemetry(sid, data):
         image = Image.open(BytesIO(base64.b64decode(imgString)))
         image_array = np.asarray(image)
         image_array = (image_array / 255.) - 0.5
-        predictions = model.predict([image_array[None, :, :, :], np.array([float(speed)])], batch_size=1)
+        predictions = model.predict([image_array[None, :, :, :]], batch_size=1)
         steering_angle = float(predictions[0][0])
-        throttle = float(predictions[1][0])
+        steerq.append(steering_angle)
 
-        #throttle = controller.update(float(speed))
+        steer_mean = np.mean(steerq)
+
+        if(abs(steer_mean) < 2):
+            controller.set_desired(20.)
+        elif(abs(steer_mean) < 5):
+            controller.set_desired(10.)
+        else:
+            controller.set_desired(5.)
+
+        throttle = controller.update(float(speed))
 
         print(steering_angle, throttle)
         send_control(steering_angle, throttle)
