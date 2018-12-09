@@ -9,6 +9,7 @@ from os import path
 import cv2
 import numpy as np
 import pandas as pd
+from imgaug import augmenters as iaa
 from keras import optimizers
 from keras.callbacks import ModelCheckpoint, EarlyStopping, TensorBoard, ReduceLROnPlateau
 from keras.layers import Input
@@ -16,20 +17,18 @@ from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
 
 from models.lenet import lenet_model
-from models.simple import simple_model
 from models.nvidia import nvidia_model
+from models.simple import simple_model
 from utils.generator import threadsafe_iter
 
 
 def plain_generator(df, batch_sz):
-
     samples = shuffle(df)
 
     while True:
 
         batch_images = []
         batch_angles = []
-
 
         batch = samples.sample(batch_sz, replace=False)
 
@@ -61,7 +60,6 @@ def plain_generator(df, batch_sz):
 
 
 def training_generator(df, batch_sz, lr_angle):
-
     samples = shuffle(df)
 
     groups = samples.groupby('bin', observed=True)
@@ -77,6 +75,27 @@ def training_generator(df, batch_sz, lr_angle):
 
     samples_per_group = ceil(batch_sz / groups.ngroups)
 
+    # Use Image Augmentation library 'imgaug' wrappering OpenCV and SciKit Image from Alexander Jung
+    # Available here at: https://github.com/aleju/imgaug
+    imgaug_augs = [
+        iaa.Grayscale(alpha=1),
+        iaa.Invert(p=0.5),
+        iaa.AddToHueAndSaturation(value=(-50,50)),
+        iaa.CoarseDropout(p=0.4, size_percent=0.025),
+        iaa.CoarseSaltAndPepper(p=0.4, size_percent=0.025),
+        # iaa.Affine(scale=(0.85,1.15)),
+        # iaa.Affine(translate_percent=(-0.1,0.1)),
+        # iaa.Superpixels(p_replace=(0.25, 0.75)),
+        # # iaa.Affine(translate_percent=(-0.1, 0.1)),
+        # iaa.Affine(rotate=(-5, 5)),
+        iaa.ContrastNormalization(alpha=(0.2, 1.5), per_channel=0.5, ),
+        iaa.Add(value=(-100, -40), per_channel=True)
+    ]
+
+    img_augmenter = iaa.SomeOf((1,4), imgaug_augs, random_state=np.random.RandomState(seed=1), random_order=1)
+
+    # Track which images have been used.
+    used_imgs = set()
 
     while True:
 
@@ -90,9 +109,7 @@ def training_generator(df, batch_sz, lr_angle):
 
             angle = float(row['steering'])
 
-
-
-             # Select either the left or right images.
+            # Select either the left or right images.
             camera = np.random.choice(['center', 'left', 'right'], 1)[0]
 
             # Adjust the angle if required.
@@ -105,6 +122,8 @@ def training_generator(df, batch_sz, lr_angle):
 
             # Get the actual image.
             image_fpath = row[camera]
+            image_fname = path.split(image_fpath)[-1]
+
             if not path.isfile(image_fpath):
                 raise FileNotFoundError("Cannot find file '{}'".format(image_fpath))
 
@@ -119,6 +138,9 @@ def training_generator(df, batch_sz, lr_angle):
                 img = np.fliplr(img)
                 angle = -angle
 
+            if image_fname not in used_imgs:
+                img = img_augmenter.augment_image(img)
+
             if np.asarray(img).dtype not in [np.int32, np.uint8, np.uint16, np.uint32] or \
                     np.min(img) < 0 or \
                     np.max(img) > 255:
@@ -128,12 +150,12 @@ def training_generator(df, batch_sz, lr_angle):
 
             batch_angles.append(angle)
             batch_images.append(img)
-
+            used_imgs.add(image_fname)
 
         yield [np.asarray(batch_images)], [np.asarray(batch_angles)]
 
-def steering_ewma(df, smoothing_win_size=5, smoothing_shift=2):
 
+def steering_ewma(df, smoothing_win_size=5, smoothing_shift=2):
     smoothed_steering = df.steering.ewm(span=smoothing_win_size).mean()
     df.steering = smoothed_steering
     df.steering = df.steering.shift(-smoothing_shift)
@@ -141,6 +163,7 @@ def steering_ewma(df, smoothing_win_size=5, smoothing_shift=2):
     df = df[:-smoothing_shift]
 
     return df
+
 
 def load_data(datadir, logname):
     glob_path = path.join(datadir, '**', logname)
@@ -175,7 +198,6 @@ def load_data(datadir, logname):
         # Smooth all data which is not the steering recovery data.
         if path.split(curr_data_path)[-1] != 'recovery':
             curr_logdata = steering_ewma(curr_logdata)
-
 
         def apply_img_path(saved_path, base_path, img_path='IMG'):
             img_fname = path.split(saved_path)[-1]
@@ -219,7 +241,7 @@ def model_fname(name='model', save_path=''):
 
 
 def train(model_arch, datadir, drivelog_name, save_model, offset_correction, batch_sz, lr, tensorboard, logdir,
-          patience, multiprocessing, crops, trained_savepath, early_stopping, epochs):
+          patience, multiprocessing, crops, trained_savepath, early_stopping, epochs, data_multiplier):
     # Get the test and validation data frames.
     train_df, validation_df = load_data(datadir, drivelog_name)
 
@@ -234,7 +256,7 @@ def train(model_arch, datadir, drivelog_name, save_model, offset_correction, bat
             training_generator(train_df, batch_sz=batch_sz, lr_angle=offset_correction))
         validation_generator = threadsafe_iter(plain_generator(train_df, batch_sz=batch_sz))
     else:
-        train_generator =  training_generator(train_df, batch_sz=batch_sz, lr_angle=offset_correction)
+        train_generator = training_generator(train_df, batch_sz=batch_sz, lr_angle=offset_correction)
         validation_generator = plain_generator(train_df, batch_sz=batch_sz)
 
     # Input tensors
@@ -264,8 +286,6 @@ def train(model_arch, datadir, drivelog_name, save_model, offset_correction, bat
     else:
         ValueError("Do not know how to handle value '{}' for model_arch.".format(model_arch))
 
-
-
     # Define the fit callbacks to run after each epoch.
     callbacks = []
 
@@ -289,7 +309,7 @@ def train(model_arch, datadir, drivelog_name, save_model, offset_correction, bat
     callbacks.append(callback_lr)
 
     model.fit_generator(train_generator,
-                        steps_per_epoch=train_df.index.size // batch_sz,
+                        steps_per_epoch=(train_df.index.size * data_multiplier) // batch_sz,
                         epochs=100 if early_stopping else epochs,
                         callbacks=callbacks,
                         validation_data=validation_generator,
@@ -431,6 +451,13 @@ if __name__ == '__main__':
         help='Enable early stopping.'
     )
 
+    parser.add_argument(
+        "--data_multiplier",
+        type=int,
+        default=1,
+        help='Number of time to multiply the data volume per epoch. Used to support iamge augmentation.'
+    )
+
     cfg = parser.parse_args()
 
     train(model_arch=cfg.model,
@@ -447,5 +474,6 @@ if __name__ == '__main__':
           trained_savepath=cfg.trained_savepath,
           tensorboard=cfg.tensorboard,
           early_stopping=cfg.early_stopping,
-          epochs=cfg.epochs
+          epochs=cfg.epochs,
+          data_multiplier=cfg.data_multiplier
           )

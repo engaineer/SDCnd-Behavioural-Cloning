@@ -79,13 +79,14 @@ def telemetry(sid, data):
         steer_mean = np.mean(steerq)
 
         if(abs(steer_mean) < 2):
-            controller.set_desired(20.)
+            controller.set_desired(25.)
         elif(abs(steer_mean) < 5):
             controller.set_desired(10.)
         else:
             controller.set_desired(5.)
 
         throttle = controller.update(float(speed))
+        
 
         print(steering_angle, throttle)
         send_control(steering_angle, throttle)
