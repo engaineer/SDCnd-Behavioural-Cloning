@@ -4,155 +4,24 @@ import re
 import time
 from glob import glob
 from math import ceil
-from os import path
+from os import path, environ
 
 import cv2
 import numpy as np
 import pandas as pd
-from imgaug import augmenters as iaa
+import tensorflow as tf
+import keras
 from keras import optimizers
 from keras.callbacks import ModelCheckpoint, EarlyStopping, TensorBoard, ReduceLROnPlateau
 from keras.layers import Input
 from sklearn.model_selection import train_test_split
-from sklearn.utils import shuffle
 
 from models.lenet import lenet_model
 from models.nvidia import nvidia_model
+from models.nvidia2 import nvidia2_model
 from models.simple import simple_model
-from utils.generator import threadsafe_iter
+from utils.datagen import ImageGenerator
 
-
-def plain_generator(df, batch_sz):
-    samples = shuffle(df)
-
-    while True:
-
-        batch_images = []
-        batch_angles = []
-
-        batch = samples.sample(batch_sz, replace=False)
-
-        for idx, row in batch.iterrows():
-
-            angle = float(row['steering'])
-            speed = float(row['speed'])
-            throttle = float(row['throttle'])
-
-            camera = 'center'
-
-            # Get the actual image.
-            image_fpath = row[camera]
-
-            if not path.isfile(image_fpath):
-                raise FileNotFoundError("Cannot find file '{}'".format(image_fpath))
-
-            img = cv2.imread(image_fpath)
-
-            # The provided drive code use images in RGB format. So convert to RGB for training.
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-            img = (img / 255.) - 0.5
-
-            batch_angles.append(angle)
-            batch_images.append(img)
-
-        yield [np.asarray(batch_images)], [np.asarray(batch_angles)]
-
-
-def training_generator(df, batch_sz, lr_angle):
-    samples = shuffle(df)
-
-    groups = samples.groupby('bin', observed=True)
-
-    empty_groups = []
-    for name, group in groups:
-        group_size = groups.get_group(name).size
-        if group_size == 0:
-            empty_groups.append(name)
-
-    for n in empty_groups:
-        df.drop(groups.get_group(n).index)
-
-    samples_per_group = ceil(batch_sz / groups.ngroups)
-
-    # Use Image Augmentation library 'imgaug' wrappering OpenCV and SciKit Image from Alexander Jung
-    # Available here at: https://github.com/aleju/imgaug
-    imgaug_augs = [
-        iaa.Grayscale(alpha=1),
-        iaa.Invert(p=0.5),
-        iaa.AddToHueAndSaturation(value=(-50,50)),
-        iaa.CoarseDropout(p=0.4, size_percent=0.025),
-        iaa.CoarseSaltAndPepper(p=0.4, size_percent=0.025),
-        # iaa.Affine(scale=(0.85,1.15)),
-        # iaa.Affine(translate_percent=(-0.1,0.1)),
-        # iaa.Superpixels(p_replace=(0.25, 0.75)),
-        # # iaa.Affine(translate_percent=(-0.1, 0.1)),
-        # iaa.Affine(rotate=(-5, 5)),
-        iaa.ContrastNormalization(alpha=(0.2, 1.5), per_channel=0.5, ),
-        iaa.Add(value=(-100, -40), per_channel=True)
-    ]
-
-    img_augmenter = iaa.SomeOf((1,4), imgaug_augs, random_state=np.random.RandomState(seed=1), random_order=1)
-
-    # Track which images have been used.
-    used_imgs = set()
-
-    while True:
-
-        # Here I ranomdly select from each steering bin category to select the number of items evenly
-        batch = groups.apply(lambda grp: grp.sample(samples_per_group, replace=True)).sample(batch_sz)
-
-        batch_images = []
-        batch_angles = []
-
-        for idx, row in batch.iterrows():
-
-            angle = float(row['steering'])
-
-            # Select either the left or right images.
-            camera = np.random.choice(['center', 'left', 'right'], 1)[0]
-
-            # Adjust the angle if required.
-            if camera == 'left':
-                angle += lr_angle
-            elif camera == 'right':
-                angle -= lr_angle
-            else:
-                pass
-
-            # Get the actual image.
-            image_fpath = row[camera]
-            image_fname = path.split(image_fpath)[-1]
-
-            if not path.isfile(image_fpath):
-                raise FileNotFoundError("Cannot find file '{}'".format(image_fpath))
-
-            img = cv2.imread(image_fpath)
-
-            # The provided drive code use images in RGB format. So convert to RGB for training.
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-            # Randomly flip Left/Right the images to assist with balancing
-            if random.choice([True, False]):
-                # Note that I used numpy flip as is it is about 20x faster than OpenCV
-                img = np.fliplr(img)
-                angle = -angle
-
-            if image_fname not in used_imgs:
-                img = img_augmenter.augment_image(img)
-
-            if np.asarray(img).dtype not in [np.int32, np.uint8, np.uint16, np.uint32] or \
-                    np.min(img) < 0 or \
-                    np.max(img) > 255:
-                raise ValueError('Image datatype or range is wrong prioer to normalization.')
-
-            img = (img / 255.) - 0.5
-
-            batch_angles.append(angle)
-            batch_images.append(img)
-            used_imgs.add(image_fname)
-
-        yield [np.asarray(batch_images)], [np.asarray(batch_angles)]
 
 
 def steering_ewma(df, smoothing_win_size=5, smoothing_shift=2):
@@ -166,7 +35,7 @@ def steering_ewma(df, smoothing_win_size=5, smoothing_shift=2):
 
 
 def load_data(datadir, logname):
-    glob_path = path.join(datadir, '**', logname)
+    glob_path = path.join(datadir, '**/**', logname)
 
     logdata = []
 
@@ -235,13 +104,13 @@ def show_bin_dist(df, name):
 
 
 def model_fname(name='model', save_path=''):
-    dtstr = time.strftime('%Y%m%d-%H%M')
+    dtstr = time.strftime('%Y%m%d-%H%M%S')
     fname = "{}_{}.h5".format(name, dtstr)
     return path.join(save_path, fname) if len(save_path) > 0 else fname
 
 
 def train(model_arch, datadir, drivelog_name, save_model, offset_correction, batch_sz, lr, tensorboard, logdir,
-          patience, multiprocessing, crops, trained_savepath, early_stopping, epochs, data_multiplier):
+          patience, multiprocessing, crops, trained_savepath, early_stopping, epochs, lr_scheduler):
     # Get the test and validation data frames.
     train_df, validation_df = load_data(datadir, drivelog_name)
 
@@ -251,17 +120,11 @@ def train(model_arch, datadir, drivelog_name, save_model, offset_correction, bat
     if len(train_df.index) == 0 or len(validation_df.index) == 0:
         raise RuntimeError('Training or Test dataframes are empty.')
 
-    if multiprocessing:
-        train_generator = threadsafe_iter(
-            training_generator(train_df, batch_sz=batch_sz, lr_angle=offset_correction))
-        validation_generator = threadsafe_iter(plain_generator(train_df, batch_sz=batch_sz))
-    else:
-        train_generator = training_generator(train_df, batch_sz=batch_sz, lr_angle=offset_correction)
-        validation_generator = plain_generator(train_df, batch_sz=batch_sz)
+    train_generator = ImageGenerator(train_df, batch_sz=batch_sz, lr_angle=offset_correction)
+    validation_generator = ImageGenerator(validation_df, batch_sz=batch_sz, lr_angle=offset_correction)
 
     # Input tensors
     input_img = Input(shape=(160, 320, 3), name='image')
-    input_speed = Input(shape=(1,), name='speed')
 
     # Model Optimizer
     # optimizer = optimizers.SGD(lr=lr)
@@ -269,22 +132,23 @@ def train(model_arch, datadir, drivelog_name, save_model, offset_correction, bat
 
     # Model Selection
     if model_arch.lower() == 'nvidia':
-        model = nvidia_model(input_img, input_speed, crops)
+        model = nvidia_model(input_img, crops)
 
-        # Compile the Model
-        model.compile(optimizer=optimizer, loss='mse')
+    elif model_arch.lower() == 'nvidia2':
+        model = nvidia2_model(input_img, crops)
 
     elif model_arch.lower() == 'simple':
         model = simple_model(input_img, crops)
-        model.compile(optimizer=optimizer, loss='mse')
-
 
     elif model_arch.lower() == 'lenet':
         model = lenet_model(input_img, crops)
-        model.compile(optimizer=optimizer, loss='mse')
 
     else:
         ValueError("Do not know how to handle value '{}' for model_arch.".format(model_arch))
+
+
+    model.compile(optimizer=optimizer, loss='mse')
+    model.summary()
 
     # Define the fit callbacks to run after each epoch.
     callbacks = []
@@ -296,6 +160,7 @@ def train(model_arch, datadir, drivelog_name, save_model, offset_correction, bat
     model_fpath = model_fname(name=model_arch, save_path=trained_savepath)
 
     if save_model:
+        # cp_fpath = path.splitext(model_fpath)[0] + "-{epoch:02d}-{val_loss:.2f}.hdf5"
         callback_cp = ModelCheckpoint(filepath=model_fpath, save_best_only=True)
         callbacks.append(callback_cp)
 
@@ -305,27 +170,30 @@ def train(model_arch, datadir, drivelog_name, save_model, offset_correction, bat
         callbacks.append(callback_es)
 
     # Learning rate scheduller
-    callback_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=2, min_lr=1e-5, verbose=1)
-    callbacks.append(callback_lr)
+    if lr_scheduler:
+        callback_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=(patience*3)//4, min_lr=1e-5, verbose=1)
+        callbacks.append(callback_lr)
 
-    model.fit_generator(train_generator,
-                        steps_per_epoch=(train_df.index.size * data_multiplier) // batch_sz,
+    model.fit_generator(generator=train_generator,
+                        validation_data=validation_generator,
                         epochs=100 if early_stopping else epochs,
                         callbacks=callbacks,
-                        validation_data=validation_generator,
-                        validation_steps=validation_df.index.size // batch_sz,
                         use_multiprocessing=multiprocessing['enabled'],
-                        max_queue_size=10,
-                        workers=multiprocessing['workers'] if multiprocessing['enabled'] else 1
-                        )
+                        workers= multiprocessing['workers'],
+                        shuffle=False,
+                        verbose=2)
 
-    if save_model and not early_stopping:
+    if save_model:
         print('Saved mode to :' + model_fpath)
-        model.save(model_fpath)
+        if not (early_stopping or lr_scheduler):
+            model.save(model_fpath)
 
 
 if __name__ == '__main__':
     global cfg
+
+    print(f"Tensorflow = \t {tf.__version__}")
+    print(f"Keras = \t {keras.__version__}")
 
     parser = argparse.ArgumentParser('Train')
 
@@ -333,7 +201,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--datadir',
         type=str,
-        default='./data',
+        default='/home/neuralflux/Development/SDCnd/SDCnd-Behavioural-Cloning/data',
         help='The root Directory of the data files.'
     )
 
@@ -353,8 +221,8 @@ if __name__ == '__main__':
 
     parser.add_argument(
         '--save_model',
-        type=bool,
-        default=True,
+        dest='save_model',
+        action='store_true',
         help='Save the model upon completion.'
     )
 
@@ -375,7 +243,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--batch_sz',
         type=int,
-        default=16,
+        default=32,
         help='Size for each batch'
     )
 
@@ -452,13 +320,22 @@ if __name__ == '__main__':
     )
 
     parser.add_argument(
-        "--data_multiplier",
-        type=int,
-        default=1,
-        help='Number of time to multiply the data volume per epoch. Used to support iamge augmentation.'
+        '--lr_scheduler',
+        dest='lr_scheduler',
+        action='store_true',
+        help='Enable Learning Rate Schedulling'
+    )
+
+
+    parser.add_argument(
+        '--visible_gpus',
+        type=str,
+        default="0",
+        help='Which GPUs are visible.'
     )
 
     cfg = parser.parse_args()
+    environ["CUDA_VISIBLE_DEVICES"]=cfg.visible_gpus
 
     train(model_arch=cfg.model,
           datadir=cfg.datadir,
@@ -475,5 +352,5 @@ if __name__ == '__main__':
           tensorboard=cfg.tensorboard,
           early_stopping=cfg.early_stopping,
           epochs=cfg.epochs,
-          data_multiplier=cfg.data_multiplier
+          lr_scheduler=cfg.lr_scheduler
           )

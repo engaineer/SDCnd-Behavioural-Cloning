@@ -18,6 +18,7 @@ from keras import __version__ as keras_version
 from collections import deque
 import math
 import numpy as np
+import tensorflow as tf
 
 sio = socketio.Server()
 app = Flask(__name__)
@@ -50,12 +51,10 @@ class SimplePIController:
 
 
 controller = SimplePIController(0.1, 0.002)
-set_speed = 9
+set_speed = 25
 controller.set_desired(set_speed)
 
-steerq = deque(maxlen=5)
-
-
+# steerq = deque(maxlen=5)
 
 
 @sio.on('telemetry')
@@ -71,20 +70,20 @@ def telemetry(sid, data):
         imgString = data["image"]
         image = Image.open(BytesIO(base64.b64decode(imgString)))
         image_array = np.asarray(image)
-        image_array = (image_array / 255.) - 0.5
-        predictions = model.predict([image_array[None, :, :, :]], batch_size=1)
-        steering_angle = float(predictions[0][0])
-        steerq.append(steering_angle)
+        steering_angle = float(model.predict(image_array[None, :, :, :], batch_size=1))
+        # steering_angle = float(predictions[0][0])
+        # steerq.append(steering_angle)
 
-        steer_mean = np.mean(steerq)
+        # steer_mean = np.mean(steerq)
 
-        if(abs(steer_mean) < 2):
-            controller.set_desired(25.)
-        elif(abs(steer_mean) < 5):
-            controller.set_desired(10.)
-        else:
-            controller.set_desired(5.)
+        # if(abs(steer_mean) < 2):
+        #     controller.set_desired(25.)
+        # elif(abs(steer_mean) < 5):
+        #     controller.set_desired(10.)
+        # else:
+        #     controller.set_desired(5.)
 
+        # controller.set_desired(2)
         throttle = controller.update(float(speed))
         
 
@@ -142,7 +141,7 @@ if __name__ == '__main__':
         print('You are using Keras version ', keras_version,
               ', but the model was built using ', model_version)
 
-    model = load_model(args.model)
+    model = load_model(args.model, custom_objects={'tf':tf})
 
     if args.image_folder != '':
         print("Creating image folder at {}".format(args.image_folder))
