@@ -5,6 +5,9 @@ trained/
 logs/
 recordings/
 
+# Don't ignore log files in the doc directory.
+!doc/*.log
+
 # Created by .ignore support plugin (hsz.mobi)
 ### Python template
 # Byte-compiled / optimized / DLL files
@@ -207,3 +210,5 @@ fabric.properties
 # Android studio 3.1+ serialized cache file
 .idea/caches/build_file_checksums.ser
 
+/.idea/misc.xml
+/.idea/encodings.xml

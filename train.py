@@ -1,16 +1,13 @@
 import argparse
-import random
 import re
 import time
 from glob import glob
-from math import ceil
 from os import path, environ
 
-import cv2
+import keras
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-import keras
 from keras import optimizers
 from keras.callbacks import ModelCheckpoint, EarlyStopping, TensorBoard, ReduceLROnPlateau
 from keras.layers import Input
@@ -18,10 +15,8 @@ from sklearn.model_selection import train_test_split
 
 from models.lenet import lenet_model
 from models.nvidia import nvidia_model
-from models.nvidia2 import nvidia2_model
 from models.simple import simple_model
 from utils.datagen import ImageGenerator
-
 
 
 def steering_ewma(df, smoothing_win_size=5, smoothing_shift=2):
@@ -134,9 +129,6 @@ def train(model_arch, datadir, drivelog_name, save_model, offset_correction, bat
     if model_arch.lower() == 'nvidia':
         model = nvidia_model(input_img, crops)
 
-    elif model_arch.lower() == 'nvidia2':
-        model = nvidia2_model(input_img, crops)
-
     elif model_arch.lower() == 'simple':
         model = simple_model(input_img, crops)
 
@@ -145,7 +137,6 @@ def train(model_arch, datadir, drivelog_name, save_model, offset_correction, bat
 
     else:
         ValueError("Do not know how to handle value '{}' for model_arch.".format(model_arch))
-
 
     model.compile(optimizer=optimizer, loss='mse')
     model.summary()
@@ -171,7 +162,8 @@ def train(model_arch, datadir, drivelog_name, save_model, offset_correction, bat
 
     # Learning rate scheduller
     if lr_scheduler:
-        callback_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=(patience*3)//4, min_lr=1e-5, verbose=1)
+        callback_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=(patience * 3) // 4, min_lr=1e-5,
+                                        verbose=1)
         callbacks.append(callback_lr)
 
     model.fit_generator(generator=train_generator,
@@ -179,14 +171,14 @@ def train(model_arch, datadir, drivelog_name, save_model, offset_correction, bat
                         epochs=100 if early_stopping else epochs,
                         callbacks=callbacks,
                         use_multiprocessing=multiprocessing['enabled'],
-                        workers= multiprocessing['workers'],
+                        workers=multiprocessing['workers'],
                         shuffle=False,
-                        verbose=2)
+                        verbose=1)
 
     if save_model:
-        print('Saved mode to :' + model_fpath)
         if not (early_stopping or lr_scheduler):
             model.save(model_fpath)
+            print('Saved mode to :' + model_fpath);
 
 
 if __name__ == '__main__':
@@ -326,7 +318,6 @@ if __name__ == '__main__':
         help='Enable Learning Rate Schedulling'
     )
 
-
     parser.add_argument(
         '--visible_gpus',
         type=str,
@@ -335,7 +326,9 @@ if __name__ == '__main__':
     )
 
     cfg = parser.parse_args()
-    environ["CUDA_VISIBLE_DEVICES"]=cfg.visible_gpus
+    environ["CUDA_VISIBLE_DEVICES"] = cfg.visible_gpus
+    environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+
 
     train(model_arch=cfg.model,
           datadir=cfg.datadir,
