@@ -11,7 +11,7 @@ My solution to this project consists of the following source code files that are
    left and right vehicle cameras.  This program takes arguments to control the training of the model.
   - [nvidia.py](models/nvidia.py): This contains the code implementing the model used to predict the steering angles.  It is called NVIDIA as the model is based upon the research NVIDIA did for using deep learning to control a self driving car (see their Aug 2016 blog article [End-to-End Deep Learning for Self-Driving Cars](https://devblogs.nvidia.com/deep-learning-self-driving-cars/).
   - [datagen.py](models/generator.py): Contains the code for my data generator class [ImageGenerator()](/utils/datagen.py#L12-L111) that implements the file selection, reading from disk and image augmentation of the training images.
-  - [drive.py](drive.py): If the Udacity provided utility for loading the trained model and interfacing it with the Udacity Car Simulator.  The final version is largely unmodified from that provided apart form setting the speed form 9 to 25.
+  - [drive.py](drive.py): The Udacity provided utility for loading the trained model and interfacing it with the Udacity Car Simulator.  The final version is largely unmodified from that provided apart form setting the speed from 9 to 25.
 
 Additional files of interest which are aviailable are the:
 - [logs/train_20190317-170803.log](logs/train_20190317-170803.log): A log of the runtime training session.
