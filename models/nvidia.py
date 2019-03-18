@@ -20,10 +20,8 @@ def to_yuv(img, in_cspace='RGB'):
 
 def nvidia_model(img, crops=((0, 0), (0, 0)) ):
     """
-    A CNN model based on the NVIDIA paper.
-    The Keras Functional API is used for provide greated felxibilty
-    and to allow for easy adoption of a MIMO model (eg throttle and brake)
-    to be created.
+    A CNN model based on the NVIDIA paper implemented with Keras
+    Functional API.
     :rtype: keras.models.Model
     """
     x = Lambda(to_yuv, name='to_yuv')(img)

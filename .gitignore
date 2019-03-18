@@ -1,12 +1,15 @@
 # Project specific files to ignore
 data/
 examples/
-trained/
-logs/
+/trained/
+!/trained/nvidia_20190317-170803.h5
+
 recordings/
 
 # Don't ignore log files in the doc directory.
-!doc/*.log
+/logs/*
+!/logs/train_20190317-170803.log
+
 
 # Created by .ignore support plugin (hsz.mobi)
 ### Python template
@@ -212,3 +215,5 @@ fabric.properties
 
 /.idea/misc.xml
 /.idea/encodings.xml
+
+

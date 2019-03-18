@@ -1,0 +1,246 @@
+(sdc) neuralflux@nucleus:~/Development/SDCnd/SDCnd-Behavioural-Cloning$ python train.py --model nvidia --save_model --batch_sz 64 --multiprocessing --workers 4 --early_stopping
+Using TensorFlow backend.
+Tensorflow = 	 1.13.1
+Keras = 	 2.2.4
+====================
+	Training Steering Distribution
+--------------------
+bin
+(-1.001, -0.75]     170
+(-0.75, -0.5]       162
+(-0.5, -0.4]         97
+(-0.4, -0.3]        142
+(-0.3, -0.2]        366
+(-0.2, -0.1]        605
+(-0.1, -0.0]       2966
+(-0.0, 0.1]        4883
+(0.1, 0.2]         1021
+(0.2, 0.3]          338
+(0.3, 0.4]           53
+(0.4, 0.5]           16
+(0.5, 0.75]          11
+(0.75, 1.0]          36
+dtype: int64
+
+
+====================
+	Validation Steering Distribution
+--------------------
+bin
+(-1.001, -0.75]      41
+(-0.75, -0.5]        50
+(-0.5, -0.4]         36
+(-0.4, -0.3]         35
+(-0.3, -0.2]         97
+(-0.2, -0.1]        150
+(-0.1, -0.0]        684
+(-0.0, 0.1]        1235
+(0.1, 0.2]          279
+(0.2, 0.3]           84
+(0.3, 0.4]           17
+(0.4, 0.5]            3
+(0.5, 0.75]           4
+(0.75, 1.0]           2
+dtype: int64
+
+
+WARNING:tensorflow:From /home/neuralflux/miniconda3/envs/sdc/lib/python3.6/site-packages/tensorflow/python/framework/op_def_library.py:263: colocate_with (from tensorflow.python.framework.ops) is deprecated and will be removed in a future version.
+Instructions for updating:
+Colocations handled automatically by placer.
+2019-03-17 17:08:02.422897: I tensorflow/core/platform/profile_utils/cpu_utils.cc:94] CPU Frequency: 3100000000 Hz
+2019-03-17 17:08:02.425095: I tensorflow/compiler/xla/service/service.cc:150] XLA service 0x562d3bf107b0 executing computations on platform Host. Devices:
+2019-03-17 17:08:02.425137: I tensorflow/compiler/xla/service/service.cc:158]   StreamExecutor device (0): <undefined>, <undefined>
+2019-03-17 17:08:02.671291: I tensorflow/compiler/xla/service/service.cc:150] XLA service 0x562d3bf0dd40 executing computations on platform CUDA. Devices:
+2019-03-17 17:08:02.671343: I tensorflow/compiler/xla/service/service.cc:158]   StreamExecutor device (0): GeForce GTX 1080 Ti, Compute Capability 6.1
+2019-03-17 17:08:02.671901: I tensorflow/core/common_runtime/gpu/gpu_device.cc:1433] Found device 0 with properties:
+name: GeForce GTX 1080 Ti major: 6 minor: 1 memoryClockRate(GHz): 1.6705
+pciBusID: 0000:19:00.0
+totalMemory: 10.92GiB freeMemory: 10.76GiB
+2019-03-17 17:08:02.671933: I tensorflow/core/common_runtime/gpu/gpu_device.cc:1512] Adding visible gpu devices: 0
+2019-03-17 17:08:02.899530: I tensorflow/core/common_runtime/gpu/gpu_device.cc:984] Device interconnect StreamExecutor with strength 1 edge matrix:
+2019-03-17 17:08:02.899562: I tensorflow/core/common_runtime/gpu/gpu_device.cc:990]      0
+2019-03-17 17:08:02.899566: I tensorflow/core/common_runtime/gpu/gpu_device.cc:1003] 0:   N
+2019-03-17 17:08:02.899771: I tensorflow/core/common_runtime/gpu/gpu_device.cc:1115] Created TensorFlow device (/job:localhost/replica:0/task:0/device:GPU:0 with 10400 MB memory) -> physical GPU (device: 0, name: GeForce GTX 1080 Ti, pci bus id: 0000:19:00.0, compute capability: 6.1)
+WARNING:tensorflow:From /home/neuralflux/miniconda3/envs/sdc/lib/python3.6/site-packages/keras/backend/tensorflow_backend.py:3445: calling dropout (from tensorflow.python.ops.nn_ops) with keep_prob is deprecated and will be removed in a future version.
+Instructions for updating:
+Please use `rate` instead of `keep_prob`. Rate should be set to `rate = 1 - keep_prob`.
+_________________________________________________________________
+Layer (type)                 Output Shape              Param #
+=================================================================
+image (InputLayer)           (None, 160, 320, 3)       0
+_________________________________________________________________
+to_yuv (Lambda)              (None, 160, 320, 3)       0
+_________________________________________________________________
+normalization (Lambda)       (None, 160, 320, 3)       0
+_________________________________________________________________
+cropping2d_1 (Cropping2D)    (None, 80, 320, 3)        0
+_________________________________________________________________
+L1_conv (Conv2D)             (None, 76, 316, 24)       1824
+_________________________________________________________________
+elu_1 (ELU)                  (None, 76, 316, 24)       0
+_________________________________________________________________
+L1_pool (MaxPooling2D)       (None, 38, 158, 24)       0
+_________________________________________________________________
+batch_normalization_1 (Batch (None, 38, 158, 24)       96
+_________________________________________________________________
+L2_conv (Conv2D)             (None, 34, 154, 36)       21636
+_________________________________________________________________
+elu_2 (ELU)                  (None, 34, 154, 36)       0
+_________________________________________________________________
+L2_pool (MaxPooling2D)       (None, 17, 77, 36)        0
+_________________________________________________________________
+batch_normalization_2 (Batch (None, 17, 77, 36)        144
+_________________________________________________________________
+L3_conv (Conv2D)             (None, 13, 73, 48)        43248
+_________________________________________________________________
+elu_3 (ELU)                  (None, 13, 73, 48)        0
+_________________________________________________________________
+L3_pool (MaxPooling2D)       (None, 6, 36, 48)         0
+_________________________________________________________________
+batch_normalization_3 (Batch (None, 6, 36, 48)         192
+_________________________________________________________________
+L4_conv (Conv2D)             (None, 4, 34, 64)         27712
+_________________________________________________________________
+elu_4 (ELU)                  (None, 4, 34, 64)         0
+_________________________________________________________________
+batch_normalization_4 (Batch (None, 4, 34, 64)         256
+_________________________________________________________________
+L5_conv (Conv2D)             (None, 2, 32, 64)         36928
+_________________________________________________________________
+elu_5 (ELU)                  (None, 2, 32, 64)         0
+_________________________________________________________________
+batch_normalization_5 (Batch (None, 2, 32, 64)         256
+_________________________________________________________________
+flatten_1 (Flatten)          (None, 4096)              0
+_________________________________________________________________
+FC1_steer (Dense)            (None, 128)               524416
+_________________________________________________________________
+elu_6 (ELU)                  (None, 128)               0
+_________________________________________________________________
+dropout_1 (Dropout)          (None, 128)               0
+_________________________________________________________________
+FC2_steer (Dense)            (None, 64)                8256
+_________________________________________________________________
+elu_7 (ELU)                  (None, 64)                0
+_________________________________________________________________
+dropout_2 (Dropout)          (None, 64)                0
+_________________________________________________________________
+FC3_steer (Dense)            (None, 16)                1040
+_________________________________________________________________
+elu_8 (ELU)                  (None, 16)                0
+_________________________________________________________________
+dropout_3 (Dropout)          (None, 16)                0
+_________________________________________________________________
+OUT_steer (Dense)            (None, 1)                 17
+=================================================================
+Total params: 666,021
+Trainable params: 665,549
+Non-trainable params: 472
+_________________________________________________________________
+WARNING:tensorflow:From /home/neuralflux/miniconda3/envs/sdc/lib/python3.6/site-packages/tensorflow/python/ops/math_ops.py:3066: to_int32 (from tensorflow.python.ops.math_ops) is deprecated and will be removed in a future version.
+Instructions for updating:
+Use tf.cast instead.
+Epoch 1/100
+2019-03-17 17:08:05.942360: I tensorflow/stream_executor/dso_loader.cc:152] successfully opened CUDA library libcublas.so.10.0 locally
+169/169 [==============================] - 17s 103ms/step - loss: 6.1604 - val_loss: 0.2915
+Epoch 2/100
+169/169 [==============================] - 15s 88ms/step - loss: 2.6948 - val_loss: 0.3472
+Epoch 3/100
+169/169 [==============================] - 15s 89ms/step - loss: 1.9597 - val_loss: 0.2648
+Epoch 4/100
+169/169 [==============================] - 15s 89ms/step - loss: 1.6121 - val_loss: 0.2404
+Epoch 5/100
+169/169 [==============================] - 15s 88ms/step - loss: 1.4282 - val_loss: 0.2053
+Epoch 6/100
+169/169 [==============================] - 15s 88ms/step - loss: 1.2651 - val_loss: 0.1886
+Epoch 7/100
+169/169 [==============================] - 15s 88ms/step - loss: 1.1389 - val_loss: 0.1478
+Epoch 8/100
+169/169 [==============================] - 15s 89ms/step - loss: 0.9816 - val_loss: 0.1700
+Epoch 9/100
+169/169 [==============================] - 15s 88ms/step - loss: 0.8864 - val_loss: 0.1254
+Epoch 10/100
+169/169 [==============================] - 15s 90ms/step - loss: 0.7959 - val_loss: 0.1305
+Epoch 11/100
+169/169 [==============================] - 15s 90ms/step - loss: 0.6889 - val_loss: 0.1388
+Epoch 12/100
+169/169 [==============================] - 15s 89ms/step - loss: 0.6232 - val_loss: 0.1414
+Epoch 13/100
+169/169 [==============================] - 15s 88ms/step - loss: 0.5539 - val_loss: 0.1130
+Epoch 14/100
+169/169 [==============================] - 15s 87ms/step - loss: 0.4923 - val_loss: 0.1193
+Epoch 15/100
+169/169 [==============================] - 15s 90ms/step - loss: 0.4420 - val_loss: 0.1054
+Epoch 16/100
+169/169 [==============================] - 15s 89ms/step - loss: 0.3990 - val_loss: 0.0815
+Epoch 17/100
+169/169 [==============================] - 15s 89ms/step - loss: 0.3561 - val_loss: 0.0798
+Epoch 18/100
+169/169 [==============================] - 15s 90ms/step - loss: 0.3198 - val_loss: 0.0745
+Epoch 19/100
+169/169 [==============================] - 15s 89ms/step - loss: 0.2869 - val_loss: 0.0611
+Epoch 20/100
+169/169 [==============================] - 15s 90ms/step - loss: 0.2546 - val_loss: 0.0790
+Epoch 21/100
+169/169 [==============================] - 15s 90ms/step - loss: 0.2340 - val_loss: 0.0628
+Epoch 22/100
+169/169 [==============================] - 15s 89ms/step - loss: 0.2082 - val_loss: 0.0536
+Epoch 23/100
+169/169 [==============================] - 15s 89ms/step - loss: 0.1945 - val_loss: 0.0607
+Epoch 24/100
+169/169 [==============================] - 15s 90ms/step - loss: 0.1792 - val_loss: 0.0597
+Epoch 25/100
+169/169 [==============================] - 15s 89ms/step - loss: 0.1579 - val_loss: 0.0468
+Epoch 26/100
+169/169 [==============================] - 15s 89ms/step - loss: 0.1436 - val_loss: 0.0404
+Epoch 27/100
+169/169 [==============================] - 15s 88ms/step - loss: 0.1376 - val_loss: 0.0471
+Epoch 28/100
+169/169 [==============================] - 15s 91ms/step - loss: 0.1204 - val_loss: 0.0475
+Epoch 29/100
+169/169 [==============================] - 15s 91ms/step - loss: 0.1139 - val_loss: 0.0387
+Epoch 30/100
+169/169 [==============================] - 15s 88ms/step - loss: 0.1073 - val_loss: 0.0354
+Epoch 31/100
+169/169 [==============================] - 15s 88ms/step - loss: 0.1004 - val_loss: 0.0363
+Epoch 32/100
+169/169 [==============================] - 15s 90ms/step - loss: 0.0925 - val_loss: 0.0343
+Epoch 33/100
+169/169 [==============================] - 15s 89ms/step - loss: 0.0876 - val_loss: 0.0456
+Epoch 34/100
+169/169 [==============================] - 15s 89ms/step - loss: 0.0805 - val_loss: 0.0352
+Epoch 35/100
+169/169 [==============================] - 15s 90ms/step - loss: 0.0809 - val_loss: 0.0329
+Epoch 36/100
+169/169 [==============================] - 15s 89ms/step - loss: 0.0767 - val_loss: 0.0307
+Epoch 37/100
+169/169 [==============================] - 15s 88ms/step - loss: 0.0736 - val_loss: 0.0427
+Epoch 38/100
+169/169 [==============================] - 15s 90ms/step - loss: 0.0715 - val_loss: 0.0315
+Epoch 39/100
+169/169 [==============================] - 15s 90ms/step - loss: 0.0728 - val_loss: 0.0387
+Epoch 40/100
+169/169 [==============================] - 15s 89ms/step - loss: 0.0708 - val_loss: 0.0396
+Epoch 41/100
+169/169 [==============================] - 15s 90ms/step - loss: 0.0668 - val_loss: 0.0279
+Epoch 42/100
+169/169 [==============================] - 15s 90ms/step - loss: 0.0641 - val_loss: 0.0473
+Epoch 43/100
+169/169 [==============================] - 15s 91ms/step - loss: 0.0642 - val_loss: 0.0313
+Epoch 44/100
+169/169 [==============================] - 15s 89ms/step - loss: 0.0621 - val_loss: 0.0303
+Epoch 45/100
+169/169 [==============================] - 15s 89ms/step - loss: 0.0610 - val_loss: 0.0292
+Epoch 46/100
+169/169 [==============================] - 15s 91ms/step - loss: 0.0627 - val_loss: 0.0260
+Epoch 47/100
+169/169 [==============================] - 15s 88ms/step - loss: 0.0633 - val_loss: 0.0318
+Epoch 48/100
+169/169 [==============================] - 15s 89ms/step - loss: 0.0605 - val_loss: 0.0262
+Epoch 49/100
+169/169 [==============================] - 15s 89ms/step - loss: 0.0649 - val_loss: 0.0270
+Epoch 50/100
+169/169 [==============================] - 15s 89ms/step - loss: 0.0612 - val_loss: 0.0290
+Epoch 51/100
+169/169 [==============================] - 15s 89ms/step - loss: 0.0577 - val_loss: 0.0326
+Epoch 00051: early stopping
