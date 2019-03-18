@@ -74,10 +74,81 @@ The training data utilised to train the model was the sample Udcaity data provid
 Thus the data set used for training and validation totalled **13587 steering angles**
 
 ## Training Strategy
+
+**Initial Models**
 My model development and training strategy was iterative. I initially built basic models like what was illustrated in the lectures like
 - [simple.py](models/simple.py) : A model where the cropped RGB images were flattened and fed into a Dense output layer 
 - [lenet.py](models/lenet.py): A simple LeNet style model with 2 x Convolution followed by 2 x Fully Connected layers eith RELU activation.
 
 These models formed the basis for developing the [train.py](train.py) training harness  where the python library _argparse_ was used to set default and enable variation in the training modes (eg dropout, early stopping, left right camera offset correction, multi=processing).
 
-What was evident in these early stages of development was that my initial data generator that read batches of training  images the _drive_log,csv_ from disk was inefficient.
+**Data Generator**
+What was evident in these early stages of development was that my initial _data generator_ based on a python _loop_ with _yeild()_ was inefficient as there was  low GPU utilisation and training times per epoch were in the order of minutes for  such a small data set.  I profiled the GPU code with (NVIDIA Visual Profiler)[https://developer.nvidia.com/nvidia-visual-profiler] which showed that there were large pauses in the GPU operating the the code waiting on _thread locks_ when the keras [fit_generator()](train.py#L169-176) function was used with multiprocessing workers.  My loop generator was decorated with an [@threadsafe_generator\(\)](utils/generator.py#L18) to synchronise access to the generator. unfortunately it seems that the side effect was it stalled the worker threads from loading and preprocessing images from the disk.
+
+I progressed to developing a new generator _class_ called [ImageGenerator(...)](utils/datagen.py#L12) which extended the [keras.util.Sequence](https://keras.io/utils/).  The Keras Sequence class is a utility class that can be used  to guaranteeseach sample per epoch will only be trained once.  My **ImageGenrerator(Keras.util.Sequence)**  class also had these effect benefit of keeping the code clean and functionality encapsulated. 
+
+** Early Results**
+The result the simple models were a surpirse. Initially the car would startonthe track and begin navigating, thought the car would not negotiate corners well and at times drive off the track even in straight sections.  The steering was also erratic at times, seemingly fixating on a track feature.  Adding dropout to the [LeNet](model/letnet.py) like model Fully Connected layers smoothed the steering significantly. It was clear that dropout  generating the steering angel, though the vehicle would still drive off the track. My thoughts about this were that the model doesn't have the _capacity_ to recognise the required features of the road and the road edges in order to steer appropriately nor to create 'redundant representations' to generalize the detection of the road.
+
+** Final Model **
+With the trail of though of having the need to create a _higher-capcity_ model to learn more features, I progressed implementing 5 Convolutional Layer, 3 Fully connected layer network based upon the work done by NVIDIA. The number of filters per layer mimicked that presented in the [End-to-End Deep Learning for Self-Driving Cars](https://devblogs.nvidia.com/deep-learning-self-driving-cars/) research paper, though my model differs in the size of the cropped input image being 80x320 instead of 66x200 as that being used in the NVIDIA's implementation. My process with developing the model went as follows:
+1. Get the vehicle driving around the track first with just the convolutional layers first, no regularisation.
+2. Add regularisation with Batch-Norm and Dropout and to generalise and prevent overfitting.
+
+My implementation of the NVIDIA inspired model with Batch-Norm and Dropout was completely capable of driving around the track.  There were sections where the network agent seemed to want to avoid shadows, though I came up with a strategy to combat this which is discussed in my next section "Mechanics of Training".
+
+Of note, my image size is larger than that used in the NVIDIA model, there is highly likely to be an exceess in the number of parameters in my network that that required to navigate the one type of track.  Essentially I really want the Convolution layers to recognise thread edges on the track and for the fully connected layers to set weights to create the steering inputs.
+
+**TODO: Building the data sets**
+
+## Mechanics of Training
+All of the source code used for training is detailed in [train.py](train.py).  As mentioned above, I used several sources of data:
+- The original Udacity Provided Data.
+- My recorded data set of traversing the track in the reverse direction.
+- My recorded data set of Recovery Driving with steering inputs to re-center the vehicle on the track.
+
+In the early stages of development, to facitlitate loading of the data I created a [load_data()](train.py#L32-98) function that would glob the data directory (as specified with the *--datadir* argument) for the file *driving_log.csv* file that recorded the location of the file images as well as the throttle levels and steering angles.  The data was stored in delimited CSV.  The function [load_data()](train.py#L32-98) performed the following functions:
+- **Loading the CSV** data into a pandas data frame using appropriate addressable column names.
+- **Fixing file name paths** of all of the files to the correct relative path.
+- **Smothing Steering Data** with an exponential weighted moving filter (see [DataFrame.ewm()](https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.ewm.html)) from the pandas library. The exception to this rule was the recovery data set there were only short consecutive recordings where I didn't the initial abrupt evasive angle smoothed out.  Upon reflection, this step is probably not necessary with drop-out regularisation added in the fully connected layers as this will smooth out the steering as was seen in the early sates of the simple LeNet model when drop-out was added.
+- **Binning Steering Data** by cutting and sorting the data into steering angle 'bins' based upon the steering angle in radians. The bins were fine grained by 0.1 radian around the majority 0 degree angle up to 0.5 radians. Coarser bins were 0.5 to 0.75 radians and 0.75 to 1 radians.  Thus the complete list of bins were an array as such:
+`array([-1.  , -0.75, -0.5 , -0.4 , -0.3 , -0.2 , -0.1 , -0.  ,  0.1 , 0.2 ,  0.3 ,  0.4 ,  0.5 ,  0.75,  1.  ])` The data in these bins were then labelled with a value by adding a column in the Pandas DataFrame called *'bins'*.
+- **Making Training and Validation Datasets** by shuffling the smoothed combined data set and diving the pandas data frames into a **Training Set** *(80% of the data)* and **Validation Set** *(20% of the data)*
+
+**Data Class Imbalance**
+I took my learnings from the *'Traffic Sign Classifier Project'* where there was a class imbalance for dominant sign classes.  This is also try for the steering data in this project. The distribution of the majority of the steering angles on the Udacity data set was +ve directions to steer to the left and these are all near zero. The problem with this is that if the vehicle ned to perform a revery menouver to stop driving off the track, the weight activation of this angle is diminished by the majority values in the data.  *This is the exact opposite of what is needed.* I devised a clever strategy to prevent he class imbalance by proposing that all data angled should be able to be drawn upon equally.
+
+Data selected for a training batch is done by:
+1. *grouping* the training data into their bin label data angle.
+2. *randomly bin selection* of which steering angles will be a part of the batch.
+3. *random sampling* an steering angle and image from within a bin based upon the number of samples to be taken from each bin to fulfil the batch size.
+
+This algorithm is implemented in my [ImageGenerator(...)](utils/datagen.py). The data in the pandas data frame grouped with the private function [__group_bins(df)](utils/datagen.py#L48-55). These steering angle groups are then each sampled by a number of samples per groups calculated by: 
+```python
+samples_per_group = ceil(self.batch_sz / groups.ngroups)
+```
+We then sample per steering bin this number of samples: is implemented using Pandas sample functions taking a random sample from each batch calculated by: 
+```python
+curr_batch = self._df_groups.apply(lambda grp: grp.sample(self._samples_per_group, replace=True)).sample(  
+            self.batch_sz)
+```
+As we are rounding up the number of samples to be taken per bin, the number of overall samples may be greater than the batch size. This is fine as we just re-randomly sample the samples to the batch size hence the final `.sample(  
+            self.batch_sz)` at the end. This code can be viewed in the [__getitem__()](utils/datagen.py#L84) function around line 84.
+
+This technique works very well. Additionally *left*, *right* camera images are used in addtion to the *centre* images and images are randomly *flipped* left and right providing an alternative representation.
+
+**Image Augmentation**
+This took a couple of goes to get this what I wanted. My initial strategy was to 
+
+- The purpose of my  [ImageGenerator(...)](utils/datagen.py#L12)  class was to process a data from 
+
+## Results
+### Training
+Losses
+
+
+### Track 1
+
+## Conclusions
+
+## Extensions
