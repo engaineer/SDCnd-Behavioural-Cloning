@@ -175,15 +175,27 @@ The image augmenters are setup in the `ImageGenerator()` class with the function
 
 The same augmentations that are applied to the training set are applied to the validation data set.  The same generator is also used as I want the validation loss values against the same agumentations and image selections as that on the training data set. Though still acceptable, I don't want to artificially bias the validation result by giving raw clean image data.
 
+Here are three examples of three Image augmentations.
+
+ #   |  Original  |  Augmented | Comments
+ --- | --- | --- | ---
+1 | ![Original Image 1](doc/img_sample1.png) | ![Augmented Image 1](doc/augimg_sample1.png) | Moderate Hue changes, Coarse Dropout affecting the visability of the near left line.
+2 | ![Original Image 2](doc/img_sample2.png) | ![Augmented Image 2](doc/augimg_sample2.png) | Slight Hue changes, Coarse Dropout acting as slight on the road noise.
+3 | ![Original Image 3](doc/img_sample3.png) | ![Augmented Image 3](doc/augimg_sample3.png) | Strong Hue changes, Coarse Dropout affecting straight ahead and turn visability.
+
 
 ## Results
 ### Training
-Here I present the training losses for the model in the repository [nvidia_20190317-170803.h5](trained/nvidia_20190317-170803.h5)  The loss values are presented on a log scale. There were 34 epochs as the validation loss values started to increase again and Keras saved the model with the lowest loss and terminated the run after 5 consecutive, though small, increases in the loss. Though built in as a facility of the code, I did not have learning rate scheduling turned on to force the reduction in the learning rate for the final solution.
+Here I present the training losses for the final model in the repository [nvidia_20190317-170803.h5](trained/nvidia_20190317-170803.h5)  The loss values are presented on a log scale. There were 34 epochs as the validation loss values started to increase again and Keras saved the model with the lowest loss and terminated the run after 5 consecutive, though small, increases in the loss. Though built in as a facility of the code, I did not have learning rate scheduling turned on to force the reduction in the learning rate for the final solution.
 
+![Losses Graph](doc/losses_graph.jpg)
 
 ### Track 1
 I have uploaded my result of running on Track 1 to YouTube. The frame rate is set top 48fps to shorten the viewing time of the car travelling around the track.
+
 Please click on the image below to view:
+
+
 [![Track 1 Video Result](http://img.youtube.com/vi/bfZkfMtGQsY/hqdefault.jpg)](https://youtu.be/bfZkfMtGQsY "Track 1 Result")
 
 
